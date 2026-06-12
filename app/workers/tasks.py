@@ -1,13 +1,18 @@
 import logging
 from datetime import datetime
 
+import pandas as pd
+
 from app.database import SessionLocal
 from app.models.job import Job, JobStatus
+from app.services.ai_service import AIService
 from app.services.cleaning_service import CleaningService
 from app.services.file_service import FileService
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+_AGENT_SAMPLE_ROWS = 1_000  # rows fed to the agent for profiling + planning
 
 
 def _get_job(db, job_id: str) -> Job:
@@ -34,7 +39,18 @@ def process_file_task(self, job_id: str):
             job.file_path, job_id, job.cleaning_options or {}
         )
 
-        # 2. Process each chunk sequentially (workers handle true parallelism via concurrency)
+        # 2. Run AI agent on a sample from the first chunk
+        #    Agent profiles, detects issues, cleans the sample, and writes its report
+        #    to ai_insights — all before the workers start so the report is available early.
+        try:
+            sample_df = pd.read_csv(chunk_paths[0], nrows=_AGENT_SAMPLE_ROWS)
+            _, ai_report = AIService().run_agent(sample_df)
+            _update_job(db, job, ai_insights=ai_report, progress=8.0)
+            logger.info(f"Job {job_id}: agent score={ai_report.get('quality_score')}")
+        except Exception as exc:
+            logger.warning(f"Job {job_id}: AI agent skipped — {exc}")
+
+        # 3. Process each chunk (CleaningService — same options as before)
         _update_job(
             db, job,
             status=JobStatus.PROCESSING,
@@ -42,11 +58,10 @@ def process_file_task(self, job_id: str):
             total_rows=total_rows,
             progress=10.0,
         )
-
         for i, chunk_path in enumerate(chunk_paths):
             process_chunk_task(job_id, chunk_path, i, len(chunk_paths))
 
-        # 3. Merge cleaned chunks
+        # 4. Merge cleaned chunks
         _update_job(db, job, status=JobStatus.MERGING, progress=90.0)
         result_path, stats = FileService.merge_chunks(job_id, job.original_filename)
 
