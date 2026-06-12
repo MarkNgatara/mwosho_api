@@ -1,15 +1,17 @@
+import json
 import os
 from pathlib import Path
+from typing import Optional
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models.job import Job
 from app.models.user import SubscriptionTier, User
-from app.schemas.job import JobCreate, JobResponse
+from app.schemas.job import CleaningOptions, JobResponse
 from app.services.scan_service import ScanService
 from app.utils.helpers import generate_job_id, get_current_user
 from app.workers.tasks import process_file_task
@@ -30,10 +32,20 @@ _scanner = ScanService()
 @router.post("/", response_model=JobResponse, status_code=202)
 async def upload_file(
     file: UploadFile = File(...),
-    cleaning_options: JobCreate = Depends(),
+    # Frontend sends cleaning_options as a JSON string in FormData
+    cleaning_options: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Parse cleaning options from JSON string
+    opts: dict = {}
+    if cleaning_options:
+        try:
+            raw = json.loads(cleaning_options)
+            opts = CleaningOptions(**raw).model_dump()
+        except Exception:
+            opts = CleaningOptions().model_dump()  # fall back to defaults
+
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -75,8 +87,6 @@ async def upload_file(
             status_code=422,
             detail=f"File rejected by security scan: {scan.reason}",
         )
-
-    opts = cleaning_options.cleaning_options.model_dump() if cleaning_options.cleaning_options else {}
 
     job = Job(
         job_id=job_id,

@@ -22,3 +22,4 @@ stripe>=8.0.0
 pyotp>=2.9.0
 qrcode[pil]>=7.4.2
 requests>=2.31.0
+slowapi>=0.1.9

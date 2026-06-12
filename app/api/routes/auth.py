@@ -141,6 +141,7 @@ def verify_email(payload: VerifyEmailPayload, db: Session = Depends(get_db)):
     user.email_otp_hash = None
     user.otp_expires_at = None
     db.commit()
+    db.refresh(user)
 
     token = create_access_token({"sub": str(user.id)})
     return LoginResponse(access_token=token, user=UserResponse.model_validate(user))
