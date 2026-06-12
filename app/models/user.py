@@ -38,5 +38,10 @@ class User(Base):
     totp_secret = Column(String(64))
     is_2fa_enabled = Column(Boolean, default=False)
 
+    # Email verification
+    is_email_verified = Column(Boolean, default=False)
+    email_otp_hash = Column(String(64))
+    otp_expires_at = Column(DateTime(timezone=True))
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

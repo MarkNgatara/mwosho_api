@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "1ndependence Data Cleaner"
+    APP_NAME: str = "Mwosho Data Cleaning App"
     DEBUG: bool = False
     FRONTEND_URL: str = "http://localhost:3000"
 
@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     # VirusTotal
     VIRUSTOTAL_API_KEY: str = ""
+
+    # Gmail SMTP
+    GMAIL_USER: str = ""
+    GMAIL_APP_PASSWORD: str = ""
 
     @property
     def DATABASE_URL(self) -> str:

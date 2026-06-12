@@ -21,6 +21,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     subscription_tier: SubscriptionTier
     jobs_used_this_month: int
+    is_email_verified: bool = False
     created_at: datetime
 
     class Config:
