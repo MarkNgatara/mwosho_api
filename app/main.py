@@ -19,6 +19,8 @@ def _migrate():
         ("is_email_verified",       "BOOLEAN DEFAULT FALSE"),
         ("email_otp_hash",          "VARCHAR(64) NULL"),
         ("otp_expires_at",          "DATETIME NULL"),
+        ("chat_used_this_hour",     "INT DEFAULT 0"),
+        ("chat_window_start",       "DATETIME NULL"),
     ]
     try:
         with engine.connect() as conn:

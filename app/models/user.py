@@ -43,5 +43,9 @@ class User(Base):
     email_otp_hash = Column(String(64))
     otp_expires_at = Column(DateTime(timezone=True))
 
+    # AI chat rate limiting (persistent across restarts)
+    chat_used_this_hour = Column(Integer, default=0)
+    chat_window_start = Column(DateTime(timezone=True))
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
