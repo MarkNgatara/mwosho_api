@@ -17,3 +17,7 @@ alembic>=1.13.1
 anthropic>=0.25.0
 flower>=2.0.1
 numpy>=1.26.0
+stripe>=8.0.0
+pyotp>=2.9.0
+qrcode[pil]>=7.4.2
+requests>=2.31.0

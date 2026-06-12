@@ -1,10 +1,11 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     APP_NAME: str = "1ndependence Data Cleaner"
     DEBUG: bool = False
+    FRONTEND_URL: str = "http://localhost:3000"
 
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
@@ -26,6 +27,17 @@ class Settings(BaseSettings):
 
     ANTHROPIC_API_KEY: str = ""
     WORKER_CONCURRENCY: int = 4
+
+    # Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRO_PRICE_MONTHLY: str = ""       # price_xxx from Stripe dashboard
+    STRIPE_PRO_PRICE_YEARLY: str = ""
+    STRIPE_ENTERPRISE_PRICE_MONTHLY: str = ""
+    STRIPE_ENTERPRISE_PRICE_YEARLY: str = ""
+
+    # VirusTotal
+    VIRUSTOTAL_API_KEY: str = ""
 
     @property
     def DATABASE_URL(self) -> str:
