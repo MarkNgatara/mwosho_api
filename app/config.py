@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     APP_NAME: str = "Mwosho Data Cleaning App"
     DEBUG: bool = False
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "https://app.mwosho.com"
 
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
