@@ -181,4 +181,4 @@ def send_otp_email(to_email: str, otp: str, full_name: str | None = None) -> Non
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    _smtp_send(msg, to_email)
+    threading.Thread(target=_smtp_send, args=(msg, to_email), daemon=True).start()
