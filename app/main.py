@@ -50,6 +50,14 @@ def _migrate():
             for col, defn in new_job_cols:
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col} {defn}"))
+            # Expand subscription_tier ENUM to include 'scale'
+            try:
+                conn.execute(text(
+                    "ALTER TABLE users MODIFY COLUMN subscription_tier "
+                    "ENUM('free','pro','scale','enterprise') DEFAULT 'free'"
+                ))
+            except Exception:
+                pass  # already includes 'scale' or column doesn't exist yet
             conn.commit()
     except Exception as exc:
         print(f"[migration] skipped: {exc}")

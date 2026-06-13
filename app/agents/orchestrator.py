@@ -115,8 +115,8 @@ class Orchestrator:
             self._run_agent(db, job, "inspecting", InspectorAgent())
             db.refresh(job)
 
-            # 3. Governance — PRO/ENTERPRISE ──────────────────────────────
-            if tier in (SubscriptionTier.PRO, SubscriptionTier.ENTERPRISE):
+            # 3. Governance — PRO/SCALE/ENTERPRISE ───────────────────────
+            if tier in (SubscriptionTier.PRO, SubscriptionTier.SCALE, SubscriptionTier.ENTERPRISE):
                 self._set_state(db, job, "governing")
                 self._run_agent(db, job, "governing", GovernanceAgent())
                 db.refresh(job)
@@ -139,8 +139,8 @@ class Orchestrator:
             self._run_agent(db, job, "validating", ValidatorAgent())
             db.refresh(job)
 
-            # 7. Analytics — PRO/ENTERPRISE ───────────────────────────────
-            if tier in (SubscriptionTier.PRO, SubscriptionTier.ENTERPRISE):
+            # 7. Analytics — PRO/SCALE/ENTERPRISE ────────────────────────
+            if tier in (SubscriptionTier.PRO, SubscriptionTier.SCALE, SubscriptionTier.ENTERPRISE):
                 self._set_state(db, job, "analyzing")
                 self._run_agent(db, job, "analyzing", AnalyticsAgent())
                 db.refresh(job)

@@ -20,7 +20,17 @@ def _load(path: str) -> pd.DataFrame:
     ext = p.suffix.lower()
     if ext in (".xlsx", ".xls"):
         return pd.read_excel(path)
-    return pd.read_csv(path, encoding="utf-8", on_bad_lines="skip")
+    if ext == ".parquet":
+        return pd.read_parquet(path)
+    if ext == ".json":
+        return pd.read_json(path)
+    if ext == ".jsonl":
+        return pd.read_json(path, lines=True)
+    if ext == ".gz":
+        return pd.read_csv(path, compression="gzip", encoding="utf-8", on_bad_lines="skip")
+    # default: CSV / TSV
+    sep = "\t" if ext == ".tsv" else ","
+    return pd.read_csv(path, sep=sep, encoding="utf-8", on_bad_lines="skip")
 
 
 def _save(df: pd.DataFrame, path: str) -> None:

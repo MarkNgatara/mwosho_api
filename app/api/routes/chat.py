@@ -21,6 +21,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 TIER_HOURLY_LIMITS = {
     SubscriptionTier.FREE:       5,
     SubscriptionTier.PRO:        80,
+    SubscriptionTier.SCALE:      150,
     SubscriptionTier.ENTERPRISE: 200,
 }
 
