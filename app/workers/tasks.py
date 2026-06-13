@@ -12,7 +12,28 @@ from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-_AGENT_SAMPLE_ROWS = 1_000  # rows fed to the agent for profiling + planning
+_AGENT_SAMPLE_ROWS = 1_000
+
+
+# ── NEW: Full 9-agent pipeline ────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name="app.workers.tasks.run_agent_pipeline", queue="file_processing")
+def run_agent_pipeline(self, job_id: str):
+    """Runs the full Mwosho agent pipeline (Agents 0-8) for a job."""
+    try:
+        from app.agents.orchestrator import Orchestrator
+        Orchestrator().run_pipeline(job_id)
+    except Exception as exc:
+        logger.exception(f"Agent pipeline failed for job {job_id}: {exc}")
+        db = SessionLocal()
+        try:
+            job = db.query(Job).filter(Job.job_id == job_id).first()
+            if job:
+                job.status = JobStatus.FAILED
+                job.error_message = str(exc)[:500]
+                db.commit()
+        finally:
+            db.close()
 
 
 def _get_job(db, job_id: str) -> Job:

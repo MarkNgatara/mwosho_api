@@ -40,6 +40,18 @@ class Job(Base):
     cleaning_options = Column(JSON)
     ai_insights = Column(JSON)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # ── Agent pipeline ────────────────────────────────────────────────────
+    orchestrator_state   = Column(String(50), default="created")
+    dataset_type         = Column(String(50))
+    issues_found         = Column(Integer, default=0)
+    quality_score_before = Column(Float)
+    quality_score_after  = Column(Float)
+    governance_flags     = Column(JSON)
+    cleaning_plan        = Column(JSON)
+    analytics_insights   = Column(JSON)
+    report_data          = Column(JSON)
+    agent_outputs        = Column(JSON)
+
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at  = Column(DateTime(timezone=True), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True))

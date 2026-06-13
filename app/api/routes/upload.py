@@ -14,7 +14,7 @@ from app.models.user import SubscriptionTier, User
 from app.schemas.job import CleaningOptions, JobResponse
 from app.services.scan_service import ScanService
 from app.utils.helpers import generate_job_id, get_current_user
-from app.workers.tasks import process_file_task
+from app.workers.tasks import run_agent_pipeline
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -101,5 +101,5 @@ async def upload_file(
     db.commit()
     db.refresh(job)
 
-    process_file_task.delay(job_id)
+    run_agent_pipeline.delay(job_id)
     return job
