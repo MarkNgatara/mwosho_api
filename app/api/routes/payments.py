@@ -1,9 +1,10 @@
 import base64
+import logging
 
 import requests as http_requests
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -11,14 +12,20 @@ from app.database import get_db
 from app.models.user import BillingCycle, SubscriptionTier, User
 from app.utils.helpers import get_current_user
 
+logger = logging.getLogger(__name__)
+
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+_VALID_PLANS  = frozenset({"pro", "enterprise"})
+_VALID_CYCLES = frozenset({"monthly", "yearly"})
 
 # ── PayPal helpers ────────────────────────────────────────────────────────────
 
 def _paypal_base() -> str:
     return "https://api-m.sandbox.paypal.com" if settings.PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+
 
 def _paypal_token() -> str:
     creds = base64.b64encode(f"{settings.PAYPAL_CLIENT_ID}:{settings.PAYPAL_CLIENT_SECRET}".encode()).decode()
@@ -30,6 +37,39 @@ def _paypal_token() -> str:
     )
     r.raise_for_status()
     return r.json()["access_token"]
+
+
+def _verify_paypal_signature(headers: dict, payload: dict) -> bool:
+    """Verify PayPal webhook signature via PayPal's verify-webhook-signature API.
+    Returns False (rejects) if PAYPAL_WEBHOOK_ID is not configured.
+    """
+    if not settings.PAYPAL_WEBHOOK_ID:
+        logger.error("PAYPAL_WEBHOOK_ID not configured — rejecting webhook")
+        return False
+    try:
+        token = _paypal_token()
+        r = http_requests.post(
+            f"{_paypal_base()}/v1/notifications/verify-webhook-signature",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "auth_algo":        headers.get("paypal-auth-algo"),
+                "cert_url":         headers.get("paypal-cert-url"),
+                "transmission_id":  headers.get("paypal-transmission-id"),
+                "transmission_sig": headers.get("paypal-transmission-sig"),
+                "transmission_time":headers.get("paypal-transmission-time"),
+                "webhook_id":       settings.PAYPAL_WEBHOOK_ID,
+                "webhook_event":    payload,
+            },
+            timeout=10,
+        )
+        if not r.ok:
+            logger.warning("PayPal signature verify call failed: %s %s", r.status_code, r.text)
+            return False
+        return r.json().get("verification_status") == "SUCCESS"
+    except Exception as exc:
+        logger.exception("PayPal signature verification error: %s", exc)
+        return False
+
 
 PAYPAL_PLAN_MAP: dict[tuple[str, str], str] = {
     ("pro",        "monthly"): settings.PAYPAL_PRO_PLAN_MONTHLY,
@@ -53,8 +93,22 @@ TIER_MAP = {
 
 
 class CheckoutRequest(BaseModel):
-    plan: str   # "pro" | "enterprise"
-    cycle: str  # "monthly" | "yearly"
+    plan: str
+    cycle: str
+
+    @field_validator("plan")
+    @classmethod
+    def validate_plan(cls, v: str) -> str:
+        if v not in _VALID_PLANS:
+            raise ValueError(f"plan must be one of {sorted(_VALID_PLANS)}")
+        return v
+
+    @field_validator("cycle")
+    @classmethod
+    def validate_cycle(cls, v: str) -> str:
+        if v not in _VALID_CYCLES:
+            raise ValueError(f"cycle must be one of {sorted(_VALID_CYCLES)}")
+        return v
 
 
 @router.post("/checkout")
@@ -65,7 +119,7 @@ def create_checkout_session(
 ):
     price_id = PRICE_MAP.get((body.plan, body.cycle))
     if not price_id:
-        raise HTTPException(status_code=400, detail="Invalid plan or cycle")
+        raise HTTPException(status_code=400, detail="Stripe is not configured for this plan")
 
     # Create / retrieve Stripe customer
     if not current_user.stripe_customer_id:
@@ -175,9 +229,17 @@ def paypal_checkout(
     if not settings.PAYPAL_CLIENT_ID or not settings.PAYPAL_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="PayPal is not configured")
 
+    # Prevent creating a duplicate subscription for the same tier
+    requested_tier = TIER_MAP.get(body.plan)
+    if requested_tier and current_user.subscription_tier == requested_tier:
+        raise HTTPException(
+            status_code=400,
+            detail="You already have this subscription tier active.",
+        )
+
     plan_id = PAYPAL_PLAN_MAP.get((body.plan, body.cycle))
     if not plan_id:
-        raise HTTPException(status_code=400, detail="Invalid plan or cycle")
+        raise HTTPException(status_code=400, detail="PayPal plan not configured for this tier")
 
     try:
         token = _paypal_token()
@@ -187,49 +249,75 @@ def paypal_checkout(
             json={
                 "plan_id": plan_id,
                 "subscriber": {"email_address": current_user.email},
+                # custom_id encodes identity on the server side — never trust client-supplied values
                 "custom_id": f"{current_user.id}|{body.plan}|{body.cycle}",
                 "application_context": {
                     "brand_name": "Mwosho",
                     "return_url": f"{settings.FRONTEND_URL}/dashboard?upgraded=1",
                     "cancel_url": f"{settings.FRONTEND_URL}/#pricing",
                     "user_action": "SUBSCRIBE_NOW",
+                    "shipping_preference": "NO_SHIPPING",
                 },
             },
             timeout=15,
         )
         r.raise_for_status()
         sub = r.json()
-        approve_url = next(l["href"] for l in sub["links"] if l["rel"] == "approve")
+        approve_url = next(link["href"] for link in sub["links"] if link["rel"] == "approve")
         return {"url": approve_url}
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"PayPal error: {exc}")
+        logger.exception("PayPal checkout error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=502, detail="Could not initiate PayPal checkout")
 
 
 @router.post("/paypal/webhook")
 async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
-    """PayPal sends BILLING.SUBSCRIPTION.ACTIVATED and BILLING.SUBSCRIPTION.CANCELLED events."""
+    """PayPal sends BILLING.SUBSCRIPTION.* events. Signature is verified before any DB writes."""
+    raw_headers = dict(request.headers)
     payload = await request.json()
+
+    if not _verify_paypal_signature(raw_headers, payload):
+        logger.warning(
+            "Rejected PayPal webhook — signature invalid. transmission_id=%s",
+            raw_headers.get("paypal-transmission-id"),
+        )
+        raise HTTPException(status_code=400, detail="Webhook signature verification failed")
+
     event_type = payload.get("event_type", "")
     resource   = payload.get("resource", {})
-    custom_id  = resource.get("custom_id", "")  # "user_id|plan|cycle"
+    custom_id  = resource.get("custom_id", "")
 
-    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED" and custom_id:
-        parts = custom_id.split("|")
-        if len(parts) == 3:
-            user_id, plan, cycle = parts
-            user = db.query(User).filter(User.id == int(user_id)).first()
-            if user:
-                user.subscription_tier = TIER_MAP.get(plan, SubscriptionTier.FREE)
-                user.billing_cycle = BillingCycle.YEARLY if cycle == "yearly" else BillingCycle.MONTHLY
-                user.jobs_used_this_month = 0
-                db.commit()
+    if not custom_id:
+        return {"status": "ok"}
 
-    elif event_type == "BILLING.SUBSCRIPTION.CANCELLED" and custom_id:
-        parts = custom_id.split("|")
-        if parts:
+    parts = custom_id.split("|")
+
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED" and len(parts) == 3:
+        user_id_str, plan, cycle = parts
+        if plan not in _VALID_PLANS or cycle not in _VALID_CYCLES:
+            logger.warning("PayPal webhook has invalid plan/cycle in custom_id: %s", custom_id)
+            return {"status": "ok"}
+        try:
+            user = db.query(User).filter(User.id == int(user_id_str)).first()
+        except ValueError:
+            return {"status": "ok"}
+        if user:
+            user.subscription_tier = TIER_MAP.get(plan, SubscriptionTier.FREE)
+            user.billing_cycle = BillingCycle.YEARLY if cycle == "yearly" else BillingCycle.MONTHLY
+            user.jobs_used_this_month = 0
+            db.commit()
+            logger.info("PayPal activated %s/%s for user %s", plan, cycle, user_id_str)
+
+    elif event_type in ("BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED") and parts:
+        try:
             user = db.query(User).filter(User.id == int(parts[0])).first()
-            if user:
-                user.subscription_tier = SubscriptionTier.FREE
-                db.commit()
+        except ValueError:
+            return {"status": "ok"}
+        if user:
+            user.subscription_tier = SubscriptionTier.FREE
+            db.commit()
+            logger.info("PayPal cancelled subscription for user %s", parts[0])
 
     return {"status": "ok"}

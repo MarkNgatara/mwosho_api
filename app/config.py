@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     # PayPal
     PAYPAL_CLIENT_ID: str = ""
     PAYPAL_CLIENT_SECRET: str = ""
-    PAYPAL_MODE: str = "sandbox"       # "sandbox" for testing, "live" for production
+    PAYPAL_MODE: str = "live"           # "sandbox" for testing, "live" for production
+    PAYPAL_WEBHOOK_ID: str = ""         # from PayPal developer dashboard → Webhooks
     PAYPAL_PRO_PLAN_MONTHLY: str = ""   # P-XXXX from PayPal dashboard
     PAYPAL_PRO_PLAN_YEARLY: str = ""
     PAYPAL_ENTERPRISE_PLAN_MONTHLY: str = ""

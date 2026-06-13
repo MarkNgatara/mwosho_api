@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timedelta
+from typing import Callable
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, status
@@ -61,3 +62,22 @@ def get_current_user(
     if user is None or not user.is_active:
         raise exc
     return user
+
+
+def require_tier(*tiers) -> Callable:
+    """FastAPI dependency: raises 403 unless user's tier is in the allowed set.
+
+    Usage:  current_user: User = Depends(require_tier(SubscriptionTier.PRO, SubscriptionTier.ENTERPRISE))
+    """
+    from app.models.user import SubscriptionTier
+
+    def _check(current_user=Depends(get_current_user)):
+        if current_user.subscription_tier not in tiers:
+            names = " or ".join(t.value.title() for t in tiers)
+            raise HTTPException(
+                status_code=403,
+                detail=f"This feature requires a {names} subscription. Please upgrade your plan.",
+            )
+        return current_user
+
+    return _check
