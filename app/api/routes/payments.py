@@ -321,3 +321,146 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
             logger.info("PayPal cancelled subscription for user %s", parts[0])
 
     return {"status": "ok"}
+
+
+# ── M-Pesa via IntaSend ───────────────────────────────────────────────────────
+# M-Pesa has no card-on-file, so each charge is a one-time STK push. A "subscription"
+# means: collect one cycle up front, upgrade the tier, set period_end; renewal re-prompts.
+
+def _intasend_base() -> str:
+    return "https://sandbox.intasend.com" if settings.INTASEND_MODE == "sandbox" else "https://api.intasend.com"
+
+
+# KES prices per plan+cycle. ADJUST THESE to your real M-Pesa pricing.
+MPESA_PRICES_KES: dict[tuple[str, str], int] = {
+    ("pro",        "monthly"): 3900,
+    ("pro",        "yearly"):  37000,
+    ("enterprise", "monthly"): 13000,
+    ("enterprise", "yearly"):  127000,
+}
+
+
+def _normalize_msisdn(phone: str) -> str | None:
+    """Normalize a Kenyan phone number to 2547XXXXXXXX / 2541XXXXXXXX, or None if invalid."""
+    p = "".join(ch for ch in phone if ch.isdigit())
+    if p.startswith("0") and len(p) == 10:
+        p = "254" + p[1:]
+    elif len(p) == 9 and p[0] in ("7", "1"):
+        p = "254" + p
+    if len(p) == 12 and p.startswith("254") and p[3] in ("7", "1"):
+        return p
+    return None
+
+
+def _period_end_for(cycle: str):
+    from datetime import datetime, timedelta, timezone
+    days = 365 if cycle == "yearly" else 30
+    return datetime.now(timezone.utc) + timedelta(days=days)
+
+
+class MpesaCheckoutRequest(BaseModel):
+    plan: str
+    cycle: str
+    phone: str
+
+    @field_validator("plan")
+    @classmethod
+    def _validate_plan(cls, v: str) -> str:
+        if v not in _VALID_PLANS:
+            raise ValueError(f"plan must be one of {sorted(_VALID_PLANS)}")
+        return v
+
+    @field_validator("cycle")
+    @classmethod
+    def _validate_cycle(cls, v: str) -> str:
+        if v not in _VALID_CYCLES:
+            raise ValueError(f"cycle must be one of {sorted(_VALID_CYCLES)}")
+        return v
+
+
+@router.post("/mpesa/checkout")
+def mpesa_checkout(
+    body: MpesaCheckoutRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if not settings.INTASEND_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="M-Pesa is not configured")
+
+    amount = MPESA_PRICES_KES.get((body.plan, body.cycle))
+    if not amount:
+        raise HTTPException(status_code=400, detail="Invalid plan or cycle")
+
+    msisdn = _normalize_msisdn(body.phone)
+    if not msisdn:
+        raise HTTPException(status_code=400, detail="Enter a valid Kenyan M-Pesa number, e.g. 0712345678")
+
+    r = None
+    try:
+        r = http_requests.post(
+            f"{_intasend_base()}/api/v1/payment/mpesa-stk-push/",
+            headers={
+                "Authorization": f"Bearer {settings.INTASEND_SECRET_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "amount": amount,
+                "phone_number": msisdn,
+                "currency": "KES",
+                # api_ref carries identity for the webhook — server-set, never trusted from the client
+                "api_ref": f"{current_user.id}|{body.plan}|{body.cycle}",
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+        invoice = data.get("invoice", {}) or {}
+        return {
+            "invoice_id": invoice.get("invoice_id"),
+            "state": invoice.get("state", "PENDING"),
+            "amount_kes": amount,
+            "phone": msisdn,
+            "message": "Check your phone and enter your M-Pesa PIN on the prompt.",
+        }
+    except http_requests.HTTPError:
+        detail = r.text[:300] if r is not None else ""
+        logger.warning("IntaSend STK push rejected for user %s: %s", current_user.id, detail)
+        raise HTTPException(status_code=502, detail="M-Pesa request was rejected. Check the number and try again.")
+    except Exception as exc:
+        logger.exception("IntaSend STK push error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=502, detail="Could not reach M-Pesa. Please try again.")
+
+
+@router.post("/mpesa/webhook")
+async def mpesa_webhook(request: Request, db: Session = Depends(get_db)):
+    """IntaSend posts collection status here. Verified via the shared 'challenge' before any DB write."""
+    payload = await request.json()
+
+    if not settings.INTASEND_WEBHOOK_CHALLENGE or payload.get("challenge") != settings.INTASEND_WEBHOOK_CHALLENGE:
+        logger.warning("Rejected IntaSend webhook — challenge mismatch (invoice %s)", payload.get("invoice_id"))
+        raise HTTPException(status_code=400, detail="Invalid challenge")
+
+    state   = payload.get("state", "")
+    api_ref = payload.get("api_ref", "") or ""
+
+    if state != "COMPLETE":
+        return {"status": "ok"}  # PENDING / PROCESSING / FAILED — nothing to grant
+
+    parts = api_ref.split("|")
+    if len(parts) != 3:
+        return {"status": "ok"}
+    user_id_str, plan, cycle = parts
+    if plan not in _VALID_PLANS or cycle not in _VALID_CYCLES:
+        return {"status": "ok"}
+    try:
+        user = db.query(User).filter(User.id == int(user_id_str)).first()
+    except ValueError:
+        return {"status": "ok"}
+    if user:
+        user.subscription_tier = TIER_MAP.get(plan, SubscriptionTier.FREE)
+        user.billing_cycle = BillingCycle.YEARLY if cycle == "yearly" else BillingCycle.MONTHLY
+        user.period_end = _period_end_for(cycle)
+        user.jobs_used_this_month = 0
+        db.commit()
+        logger.info("M-Pesa COMPLETE: upgraded user %s to %s/%s", user_id_str, plan, cycle)
+
+    return {"status": "ok"}

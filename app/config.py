@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     PAYPAL_ENTERPRISE_PLAN_MONTHLY: str = ""
     PAYPAL_ENTERPRISE_PLAN_YEARLY: str = ""
 
+    # IntaSend (M-Pesa)
+    INTASEND_SECRET_KEY: str = ""
+    INTASEND_PUBLISHABLE_KEY: str = ""
+    INTASEND_MODE: str = "sandbox"          # "sandbox" for testing, "live" for production
+    INTASEND_WEBHOOK_CHALLENGE: str = ""    # must match the challenge set in IntaSend dashboard webhook
+
     @property
     def DATABASE_URL(self) -> str:
         # quote_plus so passwords containing @ : / etc. don't corrupt the URL
