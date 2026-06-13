@@ -1,3 +1,6 @@
+import base64
+
+import requests as http_requests
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -11,6 +14,29 @@ from app.utils.helpers import get_current_user
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+# ── PayPal helpers ────────────────────────────────────────────────────────────
+
+def _paypal_base() -> str:
+    return "https://api-m.sandbox.paypal.com" if settings.PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+
+def _paypal_token() -> str:
+    creds = base64.b64encode(f"{settings.PAYPAL_CLIENT_ID}:{settings.PAYPAL_CLIENT_SECRET}".encode()).decode()
+    r = http_requests.post(
+        f"{_paypal_base()}/v1/oauth2/token",
+        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+        data="grant_type=client_credentials",
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+PAYPAL_PLAN_MAP: dict[tuple[str, str], str] = {
+    ("pro",        "monthly"): settings.PAYPAL_PRO_PLAN_MONTHLY,
+    ("pro",        "yearly"):  settings.PAYPAL_PRO_PLAN_YEARLY,
+    ("enterprise", "monthly"): settings.PAYPAL_ENTERPRISE_PLAN_MONTHLY,
+    ("enterprise", "yearly"):  settings.PAYPAL_ENTERPRISE_PLAN_YEARLY,
+}
 
 # Map plan+cycle → Stripe price ID (set in .env)
 PRICE_MAP: dict[tuple[str, str], str] = {
@@ -132,9 +158,78 @@ def _handle_subscription_change(db: Session, sub: dict):
         user.subscription_tier = SubscriptionTier.FREE
         user.stripe_subscription_id = None
     elif status == "active":
-        # Re-sync plan from Stripe metadata if available
         meta = sub.get("metadata", {})
         plan = meta.get("plan")
         if plan:
             user.subscription_tier = TIER_MAP.get(plan, user.subscription_tier)
     db.commit()
+
+
+# ── PayPal endpoints ──────────────────────────────────────────────────────────
+
+@router.post("/paypal/checkout")
+def paypal_checkout(
+    body: CheckoutRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if not settings.PAYPAL_CLIENT_ID or not settings.PAYPAL_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="PayPal is not configured")
+
+    plan_id = PAYPAL_PLAN_MAP.get((body.plan, body.cycle))
+    if not plan_id:
+        raise HTTPException(status_code=400, detail="Invalid plan or cycle")
+
+    try:
+        token = _paypal_token()
+        r = http_requests.post(
+            f"{_paypal_base()}/v1/billing/subscriptions",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "plan_id": plan_id,
+                "subscriber": {"email_address": current_user.email},
+                "custom_id": f"{current_user.id}|{body.plan}|{body.cycle}",
+                "application_context": {
+                    "brand_name": "Mwosho",
+                    "return_url": f"{settings.FRONTEND_URL}/dashboard?upgraded=1",
+                    "cancel_url": f"{settings.FRONTEND_URL}/#pricing",
+                    "user_action": "SUBSCRIBE_NOW",
+                },
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        sub = r.json()
+        approve_url = next(l["href"] for l in sub["links"] if l["rel"] == "approve")
+        return {"url": approve_url}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"PayPal error: {exc}")
+
+
+@router.post("/paypal/webhook")
+async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
+    """PayPal sends BILLING.SUBSCRIPTION.ACTIVATED and BILLING.SUBSCRIPTION.CANCELLED events."""
+    payload = await request.json()
+    event_type = payload.get("event_type", "")
+    resource   = payload.get("resource", {})
+    custom_id  = resource.get("custom_id", "")  # "user_id|plan|cycle"
+
+    if event_type == "BILLING.SUBSCRIPTION.ACTIVATED" and custom_id:
+        parts = custom_id.split("|")
+        if len(parts) == 3:
+            user_id, plan, cycle = parts
+            user = db.query(User).filter(User.id == int(user_id)).first()
+            if user:
+                user.subscription_tier = TIER_MAP.get(plan, SubscriptionTier.FREE)
+                user.billing_cycle = BillingCycle.YEARLY if cycle == "yearly" else BillingCycle.MONTHLY
+                user.jobs_used_this_month = 0
+                db.commit()
+
+    elif event_type == "BILLING.SUBSCRIPTION.CANCELLED" and custom_id:
+        parts = custom_id.split("|")
+        if parts:
+            user = db.query(User).filter(User.id == int(parts[0])).first()
+            if user:
+                user.subscription_tier = SubscriptionTier.FREE
+                db.commit()
+
+    return {"status": "ok"}

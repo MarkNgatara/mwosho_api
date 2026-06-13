@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     GMAIL_USER: str = ""
     GMAIL_APP_PASSWORD: str = ""
 
+    # PayPal
+    PAYPAL_CLIENT_ID: str = ""
+    PAYPAL_CLIENT_SECRET: str = ""
+    PAYPAL_MODE: str = "live"          # "sandbox" for testing, "live" for production
+    PAYPAL_PRO_PLAN_MONTHLY: str = ""   # P-XXXX from PayPal dashboard
+    PAYPAL_PRO_PLAN_YEARLY: str = ""
+    PAYPAL_ENTERPRISE_PLAN_MONTHLY: str = ""
+    PAYPAL_ENTERPRISE_PLAN_YEARLY: str = ""
+
     @property
     def DATABASE_URL(self) -> str:
         return (
