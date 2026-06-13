@@ -35,6 +35,8 @@ class JobResponse(BaseModel):
     ai_insights: Optional[Dict[str, Any]]
     created_at: datetime
     completed_at: Optional[datetime]
+    expires_at: Optional[datetime] = None
+    files_deleted: bool = False
 
     class Config:
         from_attributes = True

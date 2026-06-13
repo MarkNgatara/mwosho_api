@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Enum, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Enum, Text, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -52,6 +52,11 @@ class Job(Base):
     report_data          = Column(JSON)
     agent_outputs        = Column(JSON)
 
-    created_at  = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at  = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True))
+
+    # ── Ephemeral data policy ─────────────────────────────────────────────
+    expires_at     = Column(DateTime(timezone=True))          # 1 hr after completion
+    download_token = Column(String(64), unique=True, index=True)  # email download link
+    files_deleted  = Column(Boolean, default=False)

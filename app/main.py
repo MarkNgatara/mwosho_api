@@ -1,8 +1,14 @@
+import os
+import shutil
+import threading
+import time
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from app.config import settings
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from app.models import audit_log, agent_run  # ensure tables are registered
 from app.api.routes import auth, upload, jobs, payments, chat, agents as agents_router
 
@@ -25,6 +31,9 @@ def _migrate():
     ]
     # Jobs table new agent columns
     new_job_cols = [
+        ("expires_at",     "DATETIME NULL"),
+        ("download_token", "VARCHAR(64) NULL"),
+        ("files_deleted",  "BOOLEAN DEFAULT FALSE"),
         ("orchestrator_state",   "VARCHAR(50) DEFAULT 'created'"),
         ("dataset_type",         "VARCHAR(50) NULL"),
         ("issues_found",         "INT DEFAULT 0"),
@@ -63,6 +72,49 @@ def _migrate():
         print(f"[migration] skipped: {exc}")
 
 _migrate()
+
+
+def _cleanup_expired_files() -> None:
+    """Background thread: wipe files for jobs whose 1-hour window has passed."""
+    while True:
+        time.sleep(600)  # check every 10 minutes
+        try:
+            from app.models.job import Job
+            db = SessionLocal()
+            now = datetime.now(timezone.utc)
+            expired = (
+                db.query(Job)
+                .filter(Job.files_deleted == False, Job.expires_at != None)
+                .all()
+            )
+            for job in expired:
+                exp = job.expires_at
+                if exp is not None:
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp > now:
+                        continue
+                # Wipe files
+                for p in [job.file_path, job.result_file_path]:
+                    try:
+                        if p and os.path.exists(p):
+                            os.remove(p)
+                    except Exception:
+                        pass
+                chunks_dir = os.path.join(settings.CHUNKS_DIR, job.job_id)
+                shutil.rmtree(chunks_dir, ignore_errors=True)
+                job.files_deleted    = True
+                job.file_path        = None
+                job.result_file_path = None
+                job.download_token   = None
+            db.commit()
+            db.close()
+        except Exception as exc:
+            print(f"[cleanup] error: {exc}")
+
+
+threading.Thread(target=_cleanup_expired_files, daemon=True, name="file-cleanup").start()
+
 
 app = FastAPI(
     title=settings.APP_NAME,

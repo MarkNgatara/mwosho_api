@@ -10,7 +10,8 @@ Responsibilities:
   - Allocate workers (via Celery task dispatch)
 """
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -157,6 +158,29 @@ class Orchestrator:
             self._set_state(db, job, "completed")
             self._log(db, job_id, "orchestrator", "pipeline_complete",
                       f"quality {job.quality_score_before} → {job.quality_score_after}")
+
+            # Ephemeral data: set 1-hour expiry + one-time download token
+            job.download_token = uuid.uuid4().hex
+            job.expires_at     = datetime.now(timezone.utc) + timedelta(hours=1)
+            db.commit()
+
+            # Fire completion email (non-blocking)
+            try:
+                from app.services.email_service import send_job_complete_email
+                db.refresh(job)
+                _user = db.query(User).filter(User.id == job.user_id).first()
+                if _user:
+                    send_job_complete_email(
+                        to_email=_user.email,
+                        full_name=getattr(_user, "full_name", None),
+                        filename=job.original_filename or "your file",
+                        download_token=job.download_token,
+                        score_before=job.quality_score_before,
+                        score_after=job.quality_score_after,
+                        total_rows=job.total_rows,
+                    )
+            except Exception as _e:
+                print(f"[orchestrator] email send failed: {_e}")
 
         except Exception as exc:
             try:
