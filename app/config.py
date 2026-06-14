@@ -40,9 +40,13 @@ class Settings(BaseSettings):
     # VirusTotal
     VIRUSTOTAL_API_KEY: str = ""
 
-    # Gmail SMTP
+    # Gmail SMTP (fallback transactional email)
     GMAIL_USER: str = ""
     GMAIL_APP_PASSWORD: str = ""
+
+    # Resend — preferred transactional email provider
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "Mwosho <noreply@mwosho.com>"
 
     # PayPal
     PAYPAL_CLIENT_ID: str = ""

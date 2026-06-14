@@ -1,11 +1,37 @@
 import smtplib
 import threading
+
+import requests
+
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from app.config import settings
 
 
-def _smtp_send(msg: MIMEMultipart, to_email: str) -> None:
+def _send_via_resend(subject: str, html: str, plain: str, to_email: str) -> None:
+    resp = requests.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+        json={
+            "from": settings.EMAIL_FROM,
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+            "text": plain,
+        },
+        timeout=15,
+    )
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Resend API {resp.status_code}: {resp.text[:300]}")
+
+
+def _send_via_gmail(subject: str, html: str, plain: str, to_email: str) -> None:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"Mwosho <{settings.GMAIL_USER}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
     with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
         smtp.ehlo()
         smtp.starttls()
@@ -14,7 +40,30 @@ def _smtp_send(msg: MIMEMultipart, to_email: str) -> None:
 
 
 def _configured() -> bool:
-    return bool(settings.GMAIL_USER and settings.GMAIL_APP_PASSWORD)
+    return bool(
+        settings.RESEND_API_KEY
+        or (settings.GMAIL_USER and settings.GMAIL_APP_PASSWORD)
+    )
+
+
+def _dispatch(subject: str, html: str, plain: str, to_email: str, dev_hint: str = "") -> None:
+    """Send via the best-configured provider (Resend > Gmail), off the request thread.
+    Failures are logged rather than silently swallowed."""
+    if settings.RESEND_API_KEY:
+        sender = _send_via_resend
+    elif settings.GMAIL_USER and settings.GMAIL_APP_PASSWORD:
+        sender = _send_via_gmail
+    else:
+        print(f"[email] no provider configured -- DEV {dev_hint or subject} -> {to_email}")
+        return
+
+    def _run() -> None:
+        try:
+            sender(subject, html, plain, to_email)
+        except Exception as exc:
+            print(f"[email] send FAILED via {sender.__name__} for {to_email}: {exc!r}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def send_job_complete_email(
@@ -111,14 +160,13 @@ def send_job_complete_email(
         f"— Mwosho"
     )
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Your cleaned file is ready — {filename}"
-    msg["From"]    = f"Mwosho <{settings.GMAIL_USER}>"
-    msg["To"]      = to_email
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(html, "html"))
-
-    threading.Thread(target=_smtp_send, args=(msg, to_email), daemon=True).start()
+    _dispatch(
+        f"Your cleaned file is ready — {filename}",
+        html,
+        plain,
+        to_email,
+        dev_hint=f"job_complete {download_url}",
+    )
 
 
 def send_otp_email(to_email: str, otp: str, full_name: str | None = None) -> None:
@@ -174,11 +222,4 @@ def send_otp_email(to_email: str, otp: str, full_name: str | None = None) -> Non
 
     plain = f"Hi {name},\n\nYour Mwosho verification code is: {otp}\n\nExpires in 10 minutes.\n"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Your Mwosho verification code"
-    msg["From"] = f"Mwosho <{settings.GMAIL_USER}>"
-    msg["To"] = to_email
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(html, "html"))
-
-    threading.Thread(target=_smtp_send, args=(msg, to_email), daemon=True).start()
+    _dispatch("Your Mwosho verification code", html, plain, to_email, dev_hint=f"OTP {otp}")
