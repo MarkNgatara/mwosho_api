@@ -26,8 +26,11 @@ class User(Base):
     is_active = Column(Boolean, default=True)
 
     # Subscription
-    subscription_tier = Column(Enum(SubscriptionTier), default=SubscriptionTier.FREE)
-    billing_cycle = Column(Enum(BillingCycle), default=BillingCycle.MONTHLY)
+    subscription_tier = Column(
+        Enum(SubscriptionTier, values_callable=lambda obj: [e.value for e in obj]),
+        default=SubscriptionTier.FREE,
+    )
+    billing_cycle = Column(Enum(BillingCycle), default=BillingCycle.MONTHLY)  # DB column uses uppercase NAMES, keep default
     jobs_used_this_month = Column(Integer, default=0)
     period_end = Column(DateTime(timezone=True))         # when current period ends
 
