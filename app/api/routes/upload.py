@@ -19,7 +19,7 @@ from app.utils.helpers import generate_job_id, get_current_user
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 TIER_LIMITS = {
-    SubscriptionTier.FREE:       {"max_file_mb": 10,    "jobs_per_month": 5},
+    SubscriptionTier.FREE:       {"max_file_mb": 18,    "jobs_per_month": 5},
     SubscriptionTier.PRO:        {"max_file_mb": 500,   "jobs_per_month": 100},
     SubscriptionTier.SCALE:      {"max_file_mb": 5120,  "jobs_per_month": 500},   # 5 GB
     SubscriptionTier.ENTERPRISE: {"max_file_mb": 20480, "jobs_per_month": 999_999},  # 20 GB
