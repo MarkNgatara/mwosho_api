@@ -67,7 +67,7 @@ def get_current_user(
 def require_tier(*tiers) -> Callable:
     """FastAPI dependency: raises 403 unless user's tier is in the allowed set.
 
-    Usage:  current_user: User = Depends(require_tier(SubscriptionTier.PRO, SubscriptionTier.ENTERPRISE))
+    Usage:  current_user: User = Depends(require_tier(SubscriptionTier.GROWTH, SubscriptionTier.ENTERPRISE))
     """
     from app.models.user import SubscriptionTier
 

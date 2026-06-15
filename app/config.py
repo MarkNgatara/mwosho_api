@@ -32,8 +32,15 @@ class Settings(BaseSettings):
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_PRO_PRICE_MONTHLY: str = ""       # price_xxx from Stripe dashboard
-    STRIPE_PRO_PRICE_YEARLY: str = ""
+    # Stripe price IDs (price_xxx from dashboard) — one per tier + cycle
+    STRIPE_STARTER_PRICE_MONTHLY: str = ""
+    STRIPE_STARTER_PRICE_YEARLY: str = ""
+    STRIPE_PROFESSIONAL_PRICE_MONTHLY: str = ""
+    STRIPE_PROFESSIONAL_PRICE_YEARLY: str = ""
+    STRIPE_BUSINESS_PRICE_MONTHLY: str = ""
+    STRIPE_BUSINESS_PRICE_YEARLY: str = ""
+    STRIPE_GROWTH_PRICE_MONTHLY: str = ""
+    STRIPE_GROWTH_PRICE_YEARLY: str = ""
     STRIPE_ENTERPRISE_PRICE_MONTHLY: str = ""
     STRIPE_ENTERPRISE_PRICE_YEARLY: str = ""
 
@@ -53,8 +60,15 @@ class Settings(BaseSettings):
     PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_MODE: str = "live"           # "sandbox" for testing, "live" for production
     PAYPAL_WEBHOOK_ID: str = ""         # from PayPal developer dashboard → Webhooks
-    PAYPAL_PRO_PLAN_MONTHLY: str = ""   # P-XXXX from PayPal dashboard
-    PAYPAL_PRO_PLAN_YEARLY: str = ""
+    # PayPal plan IDs (P-XXXX from dashboard) — one per tier + cycle
+    PAYPAL_STARTER_PLAN_MONTHLY: str = ""
+    PAYPAL_STARTER_PLAN_YEARLY: str = ""
+    PAYPAL_PROFESSIONAL_PLAN_MONTHLY: str = ""
+    PAYPAL_PROFESSIONAL_PLAN_YEARLY: str = ""
+    PAYPAL_BUSINESS_PLAN_MONTHLY: str = ""
+    PAYPAL_BUSINESS_PLAN_YEARLY: str = ""
+    PAYPAL_GROWTH_PLAN_MONTHLY: str = ""
+    PAYPAL_GROWTH_PLAN_YEARLY: str = ""
     PAYPAL_ENTERPRISE_PLAN_MONTHLY: str = ""
     PAYPAL_ENTERPRISE_PLAN_YEARLY: str = ""
 
@@ -74,6 +88,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"   # tolerate leftover/legacy env keys (e.g. old PRO price IDs) so boot never fails on them
 
 
 @lru_cache()

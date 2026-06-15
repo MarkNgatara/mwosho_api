@@ -1,7 +1,7 @@
 """
 AI chat endpoint — lets users ask questions about their data / cleaning jobs.
-Rate limits stored in DB (survive server restarts):
-  FREE → 5/hour  |  PRO → 80/hour  |  ENTERPRISE → 200/hour
+Per-hour message limits are defined per tier in app/plans.py and tracked in DB
+(so they survive server restarts).
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -13,17 +13,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.job import Job
-from app.models.user import SubscriptionTier, User
+from app.models.user import User
+from app.plans import chat_limit
 from app.utils.helpers import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-TIER_HOURLY_LIMITS = {
-    SubscriptionTier.FREE:       5,
-    SubscriptionTier.PRO:        80,
-    SubscriptionTier.SCALE:      150,
-    SubscriptionTier.ENTERPRISE: 200,
-}
 
 SYSTEM_PROMPT = """You are Mwosho AI, a friendly data cleaning assistant built into the Mwosho Data Cleaning App.
 You help data analysts:
@@ -50,7 +44,7 @@ class ChatResponse(BaseModel):
 
 
 def _get_limit(user: User) -> int:
-    return TIER_HOURLY_LIMITS.get(user.subscription_tier, 5)
+    return chat_limit(user.subscription_tier)
 
 
 def _check_and_record(user: User, db: Session) -> tuple[int, int]:

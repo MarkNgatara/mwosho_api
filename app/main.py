@@ -59,14 +59,24 @@ def _migrate():
             for col, defn in new_job_cols:
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col} {defn}"))
-            # Expand subscription_tier ENUM to include 'scale'
+            # Migrate subscription_tier ENUM to the 6-tier model.
             try:
+                # 1. widen to a superset so legacy + new values both fit
                 conn.execute(text(
                     "ALTER TABLE users MODIFY COLUMN subscription_tier "
-                    "ENUM('free','pro','scale','enterprise') DEFAULT 'free'"
+                    "ENUM('free','pro','scale','starter','professional',"
+                    "'business','growth','enterprise') DEFAULT 'free'"
+                ))
+                # 2. remap legacy tiers (pre-revenue: test accounts only)
+                conn.execute(text("UPDATE users SET subscription_tier='professional' WHERE subscription_tier='pro'"))
+                conn.execute(text("UPDATE users SET subscription_tier='business' WHERE subscription_tier='scale'"))
+                # 3. narrow to the final 6-tier enum
+                conn.execute(text(
+                    "ALTER TABLE users MODIFY COLUMN subscription_tier "
+                    "ENUM('free','starter','professional','business','growth','enterprise') DEFAULT 'free'"
                 ))
             except Exception:
-                pass  # already includes 'scale' or column doesn't exist yet
+                pass  # already migrated or column doesn't exist yet
             conn.commit()
     except Exception as exc:
         print(f"[migration] skipped: {exc}")

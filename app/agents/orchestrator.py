@@ -19,6 +19,7 @@ from app.models.job import Job, JobStatus
 from app.models.audit_log import AuditLog
 from app.models.agent_run import AgentRun
 from app.models.user import SubscriptionTier
+from app.plans import entitled
 
 
 class Orchestrator:
@@ -116,14 +117,14 @@ class Orchestrator:
             self._run_agent(db, job, "inspecting", InspectorAgent())
             db.refresh(job)
 
-            # 3. Governance — PRO/SCALE/ENTERPRISE ───────────────────────
-            if tier in (SubscriptionTier.PRO, SubscriptionTier.SCALE, SubscriptionTier.ENTERPRISE):
+            # 3. Governance — Enterprise only ─────────────────────────────
+            if entitled(tier, "governance"):
                 self._set_state(db, job, "governing")
                 self._run_agent(db, job, "governing", GovernanceAgent())
                 db.refresh(job)
             else:
                 self._log(db, job_id, "orchestrator", "skip",
-                          "Governance skipped — requires PRO/ENTERPRISE")
+                          "Governance skipped — requires Enterprise")
 
             # 4. Plan ─────────────────────────────────────────────────────
             self._set_state(db, job, "planning")
@@ -140,14 +141,14 @@ class Orchestrator:
             self._run_agent(db, job, "validating", ValidatorAgent())
             db.refresh(job)
 
-            # 7. Analytics — PRO/SCALE/ENTERPRISE ────────────────────────
-            if tier in (SubscriptionTier.PRO, SubscriptionTier.SCALE, SubscriptionTier.ENTERPRISE):
+            # 7. Analytics (AI Business Analyst) — Growth & Enterprise ────
+            if entitled(tier, "analytics"):
                 self._set_state(db, job, "analyzing")
                 self._run_agent(db, job, "analyzing", AnalyticsAgent())
                 db.refresh(job)
             else:
                 self._log(db, job_id, "orchestrator", "skip",
-                          "Analytics skipped — requires PRO/ENTERPRISE")
+                          "Analytics skipped — requires Growth or higher")
 
             # 8. Report ───────────────────────────────────────────────────
             self._set_state(db, job, "reporting")

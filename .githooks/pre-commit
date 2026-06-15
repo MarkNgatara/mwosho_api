@@ -1,0 +1,23 @@
+#!/bin/sh
+# Mwosho secret-guard pre-commit hook (dependency-free).
+# HARD-BLOCKS staged content matching known secret patterns.
+# WARNS when an env file is staged (in case it gains a secret later).
+# Bypass (only if you are certain it's a false positive): git commit --no-verify
+
+patterns='sk-ant-[A-Za-z0-9_-]{20}|sk_live_[A-Za-z0-9]{16}|rk_live_[A-Za-z0-9]{16}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30}|ghp_[A-Za-z0-9]{30}|gho_[A-Za-z0-9]{30}|glpat-[A-Za-z0-9_-]{20}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|EAAA[A-Za-z0-9]{20}'
+
+hits=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+' | grep -nE "$patterns")
+if [ -n "$hits" ]; then
+  echo "X pre-commit: possible secret in staged changes - commit blocked:"
+  printf '%s\n' "$hits" | sed 's/^/   /'
+  echo "-> Move it to an environment variable. False positive? git commit --no-verify"
+  exit 1
+fi
+
+envfiles=$(git diff --cached --name-only | grep -E '(^|/)\.env($|\.)' | grep -vE '\.(example|sample|template)$')
+if [ -n "$envfiles" ]; then
+  echo "!  pre-commit: you are committing env file(s):"
+  printf '%s\n' "$envfiles" | sed 's/^/   /'
+  echo "   Confirm they hold only PUBLIC values (EXPO_PUBLIC_/NEXT_PUBLIC_), never secrets."
+fi
+exit 0

@@ -11,31 +11,15 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.job import Job
-from app.models.user import SubscriptionTier, User
+from app.models.user import User
+from app.plans import allowed_extensions, plan_for
 from app.schemas.job import CleaningOptions, JobResponse
 from app.services.scan_service import ScanService
 from app.utils.helpers import generate_job_id, get_current_user
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-TIER_LIMITS = {
-    SubscriptionTier.FREE:       {"max_file_mb": 18,    "jobs_per_month": 5},
-    SubscriptionTier.PRO:        {"max_file_mb": 500,   "jobs_per_month": 100},
-    SubscriptionTier.SCALE:      {"max_file_mb": 5120,  "jobs_per_month": 500},   # 5 GB
-    SubscriptionTier.ENTERPRISE: {"max_file_mb": 20480, "jobs_per_month": 999_999},  # 20 GB
-}
-
-# SCALE/ENTERPRISE unlock additional file types
-ALLOWED_EXTENSIONS_BASE  = {".csv", ".xlsx", ".xls", ".tsv"}
-ALLOWED_EXTENSIONS_SCALE = {".csv", ".xlsx", ".xls", ".tsv", ".json", ".parquet", ".jsonl", ".gz"}
-
 _scanner = ScanService()
-
-
-def _get_allowed_extensions(tier: SubscriptionTier) -> set[str]:
-    if tier in (SubscriptionTier.SCALE, SubscriptionTier.ENTERPRISE):
-        return ALLOWED_EXTENSIONS_SCALE
-    return ALLOWED_EXTENSIONS_BASE
 
 
 def _dispatch_pipeline(job_id: str) -> None:
@@ -71,20 +55,21 @@ async def upload_file(
             opts = CleaningOptions().model_dump()
 
     ext = Path(file.filename).suffix.lower()
-    allowed = _get_allowed_extensions(current_user.subscription_tier)
+    allowed = allowed_extensions(current_user.subscription_tier)
     if ext not in allowed:
-        base_types = "csv, tsv, xlsx, xls"
-        extra = " — upgrade to SCALE for json, parquet, jsonl, gz" if ext in ALLOWED_EXTENSIONS_SCALE else ""
         raise HTTPException(
             status_code=400,
-            detail=f"File type '{ext}' not supported on your plan. Supported: {base_types}{extra}",
+            detail=(
+                f"File type '{ext}' is not available on your plan. "
+                f"Allowed: {', '.join(sorted(allowed))}. Upgrade to unlock more formats."
+            ),
         )
 
-    limits = TIER_LIMITS[current_user.subscription_tier]
-    if current_user.jobs_used_this_month >= limits["jobs_per_month"]:
+    plan = plan_for(current_user.subscription_tier)
+    if current_user.jobs_used_this_month >= plan.jobs_per_month:
         raise HTTPException(
             status_code=429,
-            detail=f"Monthly job limit ({limits['jobs_per_month']}) reached. Upgrade your plan.",
+            detail=f"Monthly job limit ({plan.jobs_per_month}) reached on the {plan.name} plan. Upgrade for more.",
         )
 
     job_id = generate_job_id()
@@ -92,7 +77,7 @@ async def upload_file(
     upload_path.parent.mkdir(parents=True, exist_ok=True)
 
     file_size = 0
-    max_bytes = limits["max_file_mb"] * 1024 * 1024
+    max_bytes = plan.max_file_mb * 1024 * 1024
     async with aiofiles.open(upload_path, "wb") as out:
         while chunk := await file.read(1024 * 1024):
             file_size += len(chunk)
@@ -101,7 +86,7 @@ async def upload_file(
                 os.remove(upload_path)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File exceeds {limits['max_file_mb']} MB limit for your plan.",
+                    detail=f"File exceeds the {plan.max_file_mb} MB limit on the {plan.name} plan.",
                 )
             await out.write(chunk)
 

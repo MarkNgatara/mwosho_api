@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.user import BillingCycle, SubscriptionTier, User
+from app.plans import PLANS, PAID_TIERS
 from app.utils.helpers import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
-_VALID_PLANS  = frozenset({"pro", "enterprise"})
+_VALID_PLANS  = frozenset(t.value for t in PAID_TIERS)
 _VALID_CYCLES = frozenset({"monthly", "yearly"})
 
 # ── PayPal helpers ────────────────────────────────────────────────────────────
@@ -71,25 +72,23 @@ def _verify_paypal_signature(headers: dict, payload: dict) -> bool:
         return False
 
 
+# Purchasable plan keys, e.g. ["starter", "professional", "business", ...]
+_PAID_KEYS = [t.value for t in PAID_TIERS]
+
+# Map plan+cycle → provider IDs, resolved from settings by naming convention
+# (STRIPE_<TIER>_PRICE_<CYCLE> / PAYPAL_<TIER>_PLAN_<CYCLE>). Tiers with no ID
+# configured yet resolve to "" and are reported to the client as "not configured".
 PAYPAL_PLAN_MAP: dict[tuple[str, str], str] = {
-    ("pro",        "monthly"): settings.PAYPAL_PRO_PLAN_MONTHLY,
-    ("pro",        "yearly"):  settings.PAYPAL_PRO_PLAN_YEARLY,
-    ("enterprise", "monthly"): settings.PAYPAL_ENTERPRISE_PLAN_MONTHLY,
-    ("enterprise", "yearly"):  settings.PAYPAL_ENTERPRISE_PLAN_YEARLY,
+    (key, cycle): getattr(settings, f"PAYPAL_{key.upper()}_PLAN_{cycle.upper()}", "")
+    for key in _PAID_KEYS for cycle in ("monthly", "yearly")
 }
 
-# Map plan+cycle → Stripe price ID (set in .env)
 PRICE_MAP: dict[tuple[str, str], str] = {
-    ("pro",        "monthly"): settings.STRIPE_PRO_PRICE_MONTHLY,
-    ("pro",        "yearly"):  settings.STRIPE_PRO_PRICE_YEARLY,
-    ("enterprise", "monthly"): settings.STRIPE_ENTERPRISE_PRICE_MONTHLY,
-    ("enterprise", "yearly"):  settings.STRIPE_ENTERPRISE_PRICE_YEARLY,
+    (key, cycle): getattr(settings, f"STRIPE_{key.upper()}_PRICE_{cycle.upper()}", "")
+    for key in _PAID_KEYS for cycle in ("monthly", "yearly")
 }
 
-TIER_MAP = {
-    "pro":        SubscriptionTier.PRO,
-    "enterprise": SubscriptionTier.ENTERPRISE,
-}
+TIER_MAP = {t.value: t for t in PAID_TIERS}
 
 
 class CheckoutRequest(BaseModel):
@@ -331,13 +330,12 @@ def _intasend_base() -> str:
     return "https://sandbox.intasend.com" if settings.INTASEND_MODE == "sandbox" else "https://api.intasend.com"
 
 
-# KES prices per plan+cycle. ADJUST THESE to your real M-Pesa pricing.
-MPESA_PRICES_KES: dict[tuple[str, str], int] = {
-    ("pro",        "monthly"): 3900,
-    ("pro",        "yearly"):  37000,
-    ("enterprise", "monthly"): 13000,
-    ("enterprise", "yearly"):  127000,
-}
+# KES prices come straight from the central PLANS table (app/plans.py) —
+# edit pricing there, not here.
+MPESA_PRICES_KES: dict[tuple[str, str], int] = {}
+for _t in PAID_TIERS:
+    MPESA_PRICES_KES[(_t.value, "monthly")] = PLANS[_t].kes_monthly
+    MPESA_PRICES_KES[(_t.value, "yearly")]  = PLANS[_t].kes_yearly
 
 
 def _normalize_msisdn(phone: str) -> str | None:

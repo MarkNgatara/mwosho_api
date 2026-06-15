@@ -6,8 +6,10 @@ from app.database import Base
 
 class SubscriptionTier(str, enum.Enum):
     FREE = "free"
-    PRO = "pro"
-    SCALE = "scale"          # $189/month — heavy data, all agents, more file types
+    STARTER = "starter"
+    PROFESSIONAL = "professional"
+    BUSINESS = "business"
+    GROWTH = "growth"
     ENTERPRISE = "enterprise"
 
 
